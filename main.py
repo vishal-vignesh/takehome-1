@@ -238,6 +238,8 @@ def handle_task_A4():
     
     return {"sorted_contacts": sorted_contacts}
 
+import os
+
 def handle_task_A5():
     """
     Write the first line of the 10 most recent .log files in /data/logs/ to /data/logs-recent.txt, most recent first.
@@ -249,32 +251,33 @@ def handle_task_A5():
     if not os.path.exists(logs_dir):
         raise Exception(f"Logs directory not found: {logs_dir}")
 
-    # List all .log files and sort them numerically based on the filename
-    log_files = sorted(
-        [f for f in os.listdir(logs_dir) if f.endswith(".log")],
-        key=lambda x: int(x.replace("log-", "").replace(".log", "")), 
-        reverse=False  # Most recent first
-    )
+    # Get all .log files with their full paths
+    log_files = [
+        os.path.join(logs_dir, f) for f in os.listdir(logs_dir) if f.endswith(".log")
+    ]
+
+    # Sort files by last modified time (most recent first)
+    log_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
 
     # Pick the 10 most recent logs
     recent_logs = log_files[:10]
 
     # Read the first line of each log file
     first_lines = []
-    for log_file in recent_logs:
-        log_path = os.path.join(logs_dir, log_file)
+    for log_path in recent_logs:
         try:
-            with open(log_path, "r") as f:
+            with open(log_path, "r", encoding="utf-8") as f:
                 first_line = f.readline().strip()
                 first_lines.append(first_line)
         except Exception as e:
-            first_lines.append(f"Error reading {log_file}: {str(e)}")
+            first_lines.append(f"Error reading {os.path.basename(log_path)}: {str(e)}")
 
     # Write the first lines to logs-recent.txt
-    with open(output_file, "w") as f:
+    with open(output_file, "w", encoding="utf-8") as f:
         f.write("\n".join(first_lines) + "\n")
 
     return {"written_file": output_file, "first_lines": first_lines}
+
 
 
 def handle_task_A6():
@@ -292,7 +295,7 @@ def handle_task_A6():
         for file in files:
             if file.endswith(".md"):
                 file_path = os.path.join(root, file)
-                relative_path = os.path.relpath(file_path, docs_dir)
+                relative_path = os.path.relpath(file_path, docs_dir).replace("\\", "/")
 
                 # Extract the first H1 title from the file
                 try:
@@ -385,7 +388,8 @@ def handle_task_A7():
 
         # 7. Write the sender’s email to /data/email-sender.txt
         with open(output_file, "w", encoding="utf-8") as f:
-            f.write(sender_email + "\n")
+            f.write(sender_email.strip())  # Remove trailing newlines
+
 
         return {
             "status": "success",
@@ -430,25 +434,25 @@ def handle_task_A8():
                 "ocr_output": extracted_text
             }
         final_number = recognized_16
-        # 4. Check Luhn
-        # if passes_luhn(recognized_16):
-        #     final_number = recognized_16
-        # else:
-        #     # If first digit is '9', try flipping it to '3'
-        #     if recognized_16[0] == '9':
-        #         possible_fix = '3' + recognized_16[1:]
-        #         if passes_luhn(possible_fix):
-        #             final_number = possible_fix
-        #         else:
-        #             return {
-        #                 "error": "Luhn check failed, flipping '9'->'3' also failed.",
-        #                 "recognized_number": recognized_16
-        #             }
-        #     else:
-        #         return {
-        #             "error": "Luhn check failed and no known fix.",
-        #             "recognized_number": recognized_16
-        #         }
+        #4. Check Luhn
+        if passes_luhn(recognized_16):
+            final_number = recognized_16
+        else:
+            # If first digit is '9', try flipping it to '3'
+            if recognized_16[0] == '9':
+                possible_fix = '3' + recognized_16[1:]
+                if passes_luhn(possible_fix):
+                    final_number = possible_fix
+                else:
+                    return {
+                        "error": "Luhn check failed, flipping '9'->'3' also failed.",
+                        "recognized_number": recognized_16
+                    }
+            else:
+                return {
+                    "error": "Luhn check failed and no known fix.",
+                    "recognized_number": recognized_16
+                }
 
         # 5. Write final_number to file
         with open(output_file, "w", encoding="utf-8") as f:
@@ -482,24 +486,20 @@ def handle_task_A9():
 
     # 4. Set up your GPT-4o-Mini credentials
     token = os.environ.get("AIPROXY_TOKEN")
-
     if not token:
         return {"error": "AIPROXY_TOKEN environment variable not set."}
 
     openai.api_key = token
     openai.api_base = "https://aiproxy.sanand.workers.dev/openai/v1"
 
-    # 5. Build a prompt enumerating all lines
-    #    Ask GPT-4o-Mini to return a JSON object with "best_pair": [line1, line2]
+    # 5. Build a strict JSON-only prompt
     enumerated_lines = "\n".join(f"{i+1}. {line}" for i, line in enumerate(lines))
     prompt = (
-        "You are a helpful assistant. I have a list of comments (one per line). "
-        "Please identify the TWO lines that are most semantically similar. "
-        "Return your answer in JSON format as follows:\n\n"
-        "{\n  \"best_pair\": [\"<comment1>\", \"<comment2>\"]\n}\n\n"
-        "Here are the lines:\n\n"
-        f"{enumerated_lines}\n\n"
-        "Respond with only the JSON object."
+        "You are an AI assistant. I have a list of comments, one per line. "
+        "Identify the TWO most semantically similar comments. "
+        "Respond **ONLY** with a valid JSON object (no explanations, no extra text). "
+        "Format: { \"best_pair\": [\"<comment1>\", \"<comment2>\"] }.\n\n"
+        f"Here are the comments:\n{enumerated_lines}\n"
     )
 
     try:
@@ -512,29 +512,34 @@ def handle_task_A9():
             ],
         )
 
-        # 7. Parse the raw response to extract JSON
-        raw_message = response["choices"][0]["message"]["content"]
+        # 7. Extract the response content
+        raw_message = response["choices"][0]["message"]["content"].strip()
+        print("🔍 RAW LLM RESPONSE:", raw_message)  # Debugging output
+
         # Remove potential markdown fences
-        raw_message = re.sub(r"^```json\s*", "", raw_message.strip())
+        raw_message = re.sub(r"^```json\s*", "", raw_message)
         raw_message = re.sub(r"\s*```$", "", raw_message)
-        if not raw_message.strip():
-            return {"error": f"LLM returned empty or invalid response: {response}"}
 
-        data = json.loads(raw_message)
+        if not raw_message:
+            return {"error": "LLM returned empty response."}
+
+        # Parse JSON
+        try:
+            data = json.loads(raw_message)
+        except json.JSONDecodeError as e:
+            return {"error": f"JSON decoding failed: {e}", "raw_response": raw_message}
+
+        # 8. Extract "best_pair" safely
         best_pair = data.get("best_pair", [])
-        if len(best_pair) != 2:
-            return {"error": f"Could not find exactly 2 lines. Received: {best_pair}"}
+        if not isinstance(best_pair, list) or len(best_pair) != 2:
+            return {"error": f"Invalid 'best_pair' format: {best_pair}"}
 
-        # 8. Write the best pair to /data/comments-similar.txt
+        # 9. Write the best pair to /data/comments-similar.txt
         with open(output_file, "w", encoding="utf-8") as f:
             f.write(best_pair[0] + "\n")
             f.write(best_pair[1] + "\n")
 
-        return {
-            "status": "success",
-            "best_pair": best_pair,
-            "written_file": output_file
-        }
+        return {"status": "success", "best_pair": best_pair, "written_file": output_file}
 
     except Exception as e:
         return {"error": str(e)}
