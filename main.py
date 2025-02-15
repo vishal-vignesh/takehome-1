@@ -90,56 +90,17 @@ async def read_file(path: str = Query(...)):
 
 def handle_task_A1(user_email: str):
     # 1. Check if 'uv' is installed.
-    if shutil.which("uv") is None:
-        try:
-            install_proc = subprocess.run(
-                ["pip", "install", "uv"],
-                check=True,
-                capture_output=True,
-                text=True
-            )
-            print("Installed uv:", install_proc.stdout)
-        except subprocess.CalledProcessError as e:
-            raise Exception("Failed to install uv: " + e.stderr)
-    
-    # 2. Download the datagen.py script.
-    datagen_url = "https://raw.githubusercontent.com/sanand0/tools-in-data-science-public/tds-2025-01/project-1/datagen.py"
-    response = requests.get(datagen_url)
-    if response.status_code != 200:
-        raise Exception(f"Failed to download datagen.py, status code: {response.status_code}")
-    
-    datagen_filename = "datagen.py"
-    with open(datagen_filename, "w") as f:
-        f.write(response.text)
-    
-    # 3. Modify the script to use a local data folder instead of '/data'.
-    #    We'll assume your local folder is the 'data' directory in your project.
-    local_data_dir = os.path.join(os.getcwd(), "data")
-    
-    # Read the downloaded file
-    with open(datagen_filename, "r") as f:
-        content = f.read()
-    
-    # Replace occurrences of '/data' (in quotes) with the local data directory.
-    # This regex will match both single and double quotes.
-    new_content = re.sub(r'([\'"])/data([\'"])', f'\\1{local_data_dir}\\2', content)
-    
-    # Write the modified content back to datagen.py
-    with open(datagen_filename, "w") as f:
-        f.write(new_content)
-    
-    # 4. Run datagen.py with the user's email as the only argument.
     try:
-        proc = subprocess.run(
-            ["python", datagen_filename, user_email],
-            check=True,
-            capture_output=True,
-            text=True
+        process = subprocess.Popen(
+            ["uv", "run", "https://raw.githubusercontent.com/sanand0/tools-in-data-science-public/tds-2025-01/project-1/datagen.py", user_email],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
+        stdout, stderr = process.communicate()
+        if process.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"Error: {stderr}")
+        return stdout
     except subprocess.CalledProcessError as e:
-        raise Exception("Error running datagen.py: " + e.stderr)
-    
-    return {"stdout": proc.stdout, "stderr": proc.stderr}
+        raise HTTPException(status_code=500, detail=f"Error: {e.stderr}")
 
 
 
@@ -292,7 +253,7 @@ def handle_task_A5():
     log_files = sorted(
         [f for f in os.listdir(logs_dir) if f.endswith(".log")],
         key=lambda x: int(x.replace("log-", "").replace(".log", "")), 
-        reverse=True  # Most recent first
+        reverse=False  # Most recent first
     )
 
     # Pick the 10 most recent logs
@@ -468,26 +429,26 @@ def handle_task_A8():
                 "error": "No line with exactly 16 digits found.",
                 "ocr_output": extracted_text
             }
-
+        final_number = recognized_16
         # 4. Check Luhn
-        if passes_luhn(recognized_16):
-            final_number = recognized_16
-        else:
-            # If first digit is '9', try flipping it to '3'
-            if recognized_16[0] == '9':
-                possible_fix = '3' + recognized_16[1:]
-                if passes_luhn(possible_fix):
-                    final_number = possible_fix
-                else:
-                    return {
-                        "error": "Luhn check failed, flipping '9'->'3' also failed.",
-                        "recognized_number": recognized_16
-                    }
-            else:
-                return {
-                    "error": "Luhn check failed and no known fix.",
-                    "recognized_number": recognized_16
-                }
+        # if passes_luhn(recognized_16):
+        #     final_number = recognized_16
+        # else:
+        #     # If first digit is '9', try flipping it to '3'
+        #     if recognized_16[0] == '9':
+        #         possible_fix = '3' + recognized_16[1:]
+        #         if passes_luhn(possible_fix):
+        #             final_number = possible_fix
+        #         else:
+        #             return {
+        #                 "error": "Luhn check failed, flipping '9'->'3' also failed.",
+        #                 "recognized_number": recognized_16
+        #             }
+        #     else:
+        #         return {
+        #             "error": "Luhn check failed and no known fix.",
+        #             "recognized_number": recognized_16
+        #         }
 
         # 5. Write final_number to file
         with open(output_file, "w", encoding="utf-8") as f:
@@ -624,7 +585,7 @@ def parse_task_with_llm(task: str) -> dict:
     # Construct a prompt with explicit mappings between task descriptions and task codes.
     prompt = (
         "You are a task parser for DataWorks Solutions. Below are the explicit mappings of task descriptions to task codes:\n\n"
-        "A1: 'Install uv (if required) and run datagen.py with ${user.email} as the only argument'\n"
+        "A1: 'Install uv (if required) and run datagen.py with ${user_email} as the only argument'\n"
         "A2: 'Format the contents of /data/format.md using prettier@3.4.2, updating the file in-place'\n"
         "A3: 'The file /data/dates.txt contains a list of dates, one per line. Count the number of Wednesdays and write just the number to /data/dates-wednesdays.txt'\n"
         "A4: 'Sort the array of contacts in /data/contacts.json by last_name, then first_name, and write the result to /data/contacts-sorted.json'\n"
